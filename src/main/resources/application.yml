@@ -1,0 +1,68 @@
+spring:
+  application:
+    name: AGENIN_LOGGING
+    version: 1.0.0
+
+  banner:
+    location: classpath:/banner-text.txt
+
+  datasource:
+    url: jdbc:postgresql://${AGENIN_DB_HOST}:${AGENIN_DB_PORT}/${AGENIN_DB_NAME}
+    username: ${AGENIN_DB_USERNAME}
+    password: ${AGENIN_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      auto-commit: false
+
+  jpa:
+    show-sql: true
+    hibernate:
+      ddl-auto: none  # ✅ Sudah benar - tidak create table baru
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+        implicit-strategy: org.hibernate.boot.model.naming.ImplicitNamingStrategyJpaCompliantImpl
+    properties:
+      hibernate:
+        format_sql: true
+        use_sql_comments: true
+        globally_quoted_identifiers: true  # ✅ TAMBAHKAN INI - Quote semua identifiers
+        globally_quoted_identifiers_skip_column_definitions: true
+
+  kafka:
+    bootstrap-servers: ${AGENIN_BOOTSTRAP_KFK_SERVER:localhost:9092}
+    consumer:
+      group-id: ${AGENIN_CONSUMER_GROUP:agenin-log-group}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.jdt16.agenin.logging.dto.request"
+        spring.json.value.default.type: com.jdt16.agenin.logging.dto.request.LogRequestDTO
+        spring.json.use.type.headers: false
+    listener:
+      ack-mode: RECORD  # ✅ Ubah ke RECORD (lebih simple dari MANUAL)
+      concurrency: 3
+
+request-topic:
+  create-log-topic: create-log-po
+
+request-reply-topic:
+  create-log-topic: create-log-co
+
+server:
+  port: 8383
+
+logging:
+  level:
+    root: INFO
+    com.jdt16.agenin.logging: DEBUG
+    org.springframework.kafka: INFO
+    org.apache.kafka: WARN
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    org.springframework.transaction: DEBUG
+    org.springframework.orm.jpa: DEBUG
