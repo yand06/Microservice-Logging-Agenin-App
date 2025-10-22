@@ -1,5 +1,8 @@
 package com.jdt16.agenin.logging.configuration.kafka;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.jdt16.agenin.logging.configuration.kafka.properties.RequestReplyTopicProperties;
 import com.jdt16.agenin.logging.dto.request.LogRequestDTO;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +21,7 @@ import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.requestreply.ReplyingKafkaTemplate;
+import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.kafka.support.serializer.JsonSerializer;
 import org.springframework.kafka.transaction.KafkaAwareTransactionManager;
@@ -49,13 +53,14 @@ public class EventKafkaConfiguration {
         Map<String, Object> config = new HashMap<>();
         config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrapServers);
         config.put(ConsumerConfig.GROUP_ID_CONFIG, kafkaConsumerGroup);
-        config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+        config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        config.put(ErrorHandlingDeserializer.KEY_DESERIALIZER_CLASS, StringDeserializer.class.getName());
+        config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        config.put(ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class.getName());
+        config.put(JsonDeserializer.TRUSTED_PACKAGES, "*"); // atau daftar package DTO Anda, "*" untuk all
+        config.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, false);
         config.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        config.put(JsonDeserializer.TRUSTED_PACKAGES, "com.jdt16.agenin.logging.dto.request");
-        config.put(JsonDeserializer.VALUE_DEFAULT_TYPE, LogRequestDTO.class.getName());
-        config.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, false);
 
         return new DefaultKafkaConsumerFactory<>(
                 config,
@@ -63,6 +68,7 @@ public class EventKafkaConfiguration {
                 new JsonDeserializer<>(Object.class, false)
         );
     }
+
 
     /**
      * Producer Factory untuk Kafka (untuk reply dan DLQ)
@@ -111,44 +117,31 @@ public class EventKafkaConfiguration {
      * Kafka Listener Container Factory untuk @KafkaListener
      * RENAME dari kafkaListenerContainerFactory menjadi nama yang lebih spesifik
      */
-    @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, Object> kafkaListenerContainerFactory(
-            ConsumerFactory<String, Object> consumerFactory) {
-
-        ConcurrentKafkaListenerContainerFactory<String, Object> factory =
-                new ConcurrentKafkaListenerContainerFactory<>();
-
+    @Bean(name = "kafkaListenerContainerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, LogRequestDTO> kafkaListenerContainerFactory(
+            ConsumerFactory<String, LogRequestDTO> consumerFactory
+    ) {
+        ConcurrentKafkaListenerContainerFactory<String, LogRequestDTO> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
         factory.setConcurrency(3);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
-
-        factory.setCommonErrorHandler(new DefaultErrorHandler(
-                new FixedBackOff(1000L, 3L)
-        ));
-
+        factory.setCommonErrorHandler(new DefaultErrorHandler(new FixedBackOff(1000L, 3L)));
         return factory;
     }
 
-    /**
-     * Reply Container untuk Request-Reply pattern
-     * RENAME dari kafkaListenerContainerFactory menjadi replyListenerContainer
-     */
     @Bean
     public ConcurrentMessageListenerContainer<String, Object> replyListenerContainer(
-            ConsumerFactory<String, Object> consumerFactory) {
-
+            ConsumerFactory<String, Object> consumerFactory
+    ) {
+        ContainerProperties containerProperties = new ContainerProperties(requestReplyTopicProperties.getTopics());
+        containerProperties.setGroupId(kafkaConsumerGroup + "-reply");
+        containerProperties.setAckMode(ContainerProperties.AckMode.MANUAL);
         ConcurrentMessageListenerContainer<String, Object> container =
-                new ConcurrentMessageListenerContainer<>(
-                        consumerFactory,
-                        new ContainerProperties(requestReplyTopicProperties.getTopics())
-                );
-
-        container.getContainerProperties().setGroupId(kafkaConsumerGroup + "-reply");
-        container.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
+                new ConcurrentMessageListenerContainer<>(consumerFactory, containerProperties);
         container.setAutoStartup(false);
-
         return container;
     }
+
 
     /**
      * ReplyingKafkaTemplate untuk Request-Reply pattern
@@ -156,14 +149,64 @@ public class EventKafkaConfiguration {
     @Bean
     public ReplyingKafkaTemplate<String, Object, Object> replyingKafkaTemplate(
             ProducerFactory<String, Object> producerFactory,
-            ConcurrentMessageListenerContainer<String, Object> replyListenerContainer) {
-
+            ConcurrentMessageListenerContainer<String, Object> replyListenerContainer
+    ) {
         ReplyingKafkaTemplate<String, Object, Object> template =
                 new ReplyingKafkaTemplate<>(producerFactory, replyListenerContainer);
-
         template.setDefaultReplyTimeout(Duration.ofSeconds(30));
         template.setSharedReplyTopic(true);
-
         return template;
     }
+
+    @Bean
+    public ConsumerFactory<String, LogRequestDTO> logRequestConsumerFactory() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule());
+        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+
+        JsonDeserializer<LogRequestDTO> jsonDeserializer = new JsonDeserializer<>(LogRequestDTO.class, objectMapper);
+        jsonDeserializer.addTrustedPackages("com.jdt16.agenin.logging.dto.request");
+
+        Map<String, Object> props = new HashMap<>();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrapServers);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, kafkaConsumerGroup);
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        props.put(ErrorHandlingDeserializer.KEY_DESERIALIZER_CLASS, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        props.put(ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class.getName());
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
+        // Jangan put properti seperti TRUSTED_PACKAGES dan USE_TYPE_INFO_HEADERS di sini
+        // karena sudah diatur pada jsonDeserializer instance secara langsung
+
+        return new DefaultKafkaConsumerFactory<>(
+                props,
+                new StringDeserializer(),
+                jsonDeserializer
+        );
+    }
+
+
+    @Bean
+    public ConsumerFactory<String, Object> objectConsumerFactory() {
+        Map<String, Object> config = new HashMap<>();
+        config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrapServers);
+        config.put(ConsumerConfig.GROUP_ID_CONFIG, kafkaConsumerGroup);
+        config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        config.put(ErrorHandlingDeserializer.KEY_DESERIALIZER_CLASS, StringDeserializer.class.getName());
+        config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
+        config.put(ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class.getName());
+        config.put(JsonDeserializer.TRUSTED_PACKAGES, "*");
+        config.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, false);
+        config.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
+        return new DefaultKafkaConsumerFactory<>(
+                config,
+                new StringDeserializer(),
+                new JsonDeserializer<>(Object.class, false)
+        );
+    }
+
 }

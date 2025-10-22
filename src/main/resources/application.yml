@@ -20,7 +20,7 @@ spring:
   jpa:
     show-sql: true
     hibernate:
-      ddl-auto: none  # ✅ Sudah benar - tidak create table baru
+      ddl-auto: none
       naming:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
         implicit-strategy: org.hibernate.boot.model.naming.ImplicitNamingStrategyJpaCompliantImpl
@@ -28,7 +28,7 @@ spring:
       hibernate:
         format_sql: true
         use_sql_comments: true
-        globally_quoted_identifiers: true  # ✅ TAMBAHKAN INI - Quote semua identifiers
+        globally_quoted_identifiers: true
         globally_quoted_identifiers_skip_column_definitions: true
 
   kafka:
@@ -44,7 +44,7 @@ spring:
         spring.json.value.default.type: com.jdt16.agenin.logging.dto.request.LogRequestDTO
         spring.json.use.type.headers: false
     listener:
-      ack-mode: RECORD  # ✅ Ubah ke RECORD (lebih simple dari MANUAL)
+      ack-mode: RECORD
       concurrency: 3
 
 request-topic:
