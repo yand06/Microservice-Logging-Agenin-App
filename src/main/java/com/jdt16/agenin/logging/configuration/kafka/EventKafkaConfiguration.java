@@ -69,7 +69,6 @@ public class EventKafkaConfiguration {
         );
     }
 
-
     /**
      * Producer Factory untuk Kafka (untuk reply dan DLQ)
      */
