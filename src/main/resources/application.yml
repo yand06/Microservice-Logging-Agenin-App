@@ -47,6 +47,21 @@ spring:
       ack-mode: RECORD
       concurrency: 3
 
+    #   Redis Configuration
+    data:
+      redis:
+        host: ${AGENIN_REDIS_HOST}
+        port: ${AGENIN_REDIS_PORT}
+        password: ${AGENIN_REDIS_PASSWORD}
+        timeout: 60000
+
+    #   Cache Configuration
+    cache:
+      type: redis
+      redis:
+        time-to-live: 600000
+        cache-null-values: false
+
 request-topic:
   create-log-topic: create-log-po
 
